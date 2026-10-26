@@ -1,0 +1,32 @@
+workflows:
+  build-macos-zip:
+    name: 靶场工坊 macOS 构建
+    max_build_duration: 30
+    instance_type: mac_mini_m2
+
+    environment:
+      vars:
+        XCODE_PROJECT: "TargetWorkshop.xcodeproj"
+        XCODE_SCHEME: "TargetWorkshop"
+
+    scripts:
+      - name: 编译 macOS 应用（未签名）
+        script: |
+          xcodebuild build \
+            -project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -derivedDataPath "$CM_BUILD_DIR/build" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: 打包为 zip
+        script: |
+          APP_PATH=$(find "$CM_BUILD_DIR/build/Build/Products/Release" -name "*.app" -maxdepth 1 | head -1)
+          echo "找到应用：$APP_PATH"
+          mkdir -p "$CM_BUILD_DIR/output"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$CM_BUILD_DIR/output/靶场工坊.zip"
+
+    artifacts:
+      - $CM_BUILD_DIR/output/*.zip
