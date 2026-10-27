@@ -6,16 +6,24 @@ workflows:
 
     environment:
       vars:
+        # 改成你实际的 .xcodeproj 文件名
         XCODE_PROJECT: "TargetWorkshop.xcodeproj"
+        # 改成你实际的 Scheme 名（必须已在 Xcode 中勾选 Shared）
         XCODE_SCHEME: "TargetWorkshop"
 
     scripts:
       - name: 编译 macOS 应用（未签名）
         script: |
+          set -e
+          echo "项目文件: $XCODE_PROJECT"
+          echo "Scheme: $XCODE_SCHEME"
+          ls -la "$CM_BUILD_DIR/$XCODE_PROJECT"
+
           xcodebuild build \
             -project "$CM_BUILD_DIR/$XCODE_PROJECT" \
             -scheme "$XCODE_SCHEME" \
             -configuration Release \
+            -destination 'platform=macOS' \
             -derivedDataPath "$CM_BUILD_DIR/build" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
@@ -23,8 +31,13 @@ workflows:
 
       - name: 打包为 zip
         script: |
+          set -e
           APP_PATH=$(find "$CM_BUILD_DIR/build/Build/Products/Release" -name "*.app" -maxdepth 1 | head -1)
-          echo "找到应用：$APP_PATH"
+          if [ -z "$APP_PATH" ]; then
+            echo "编译成功但找不到 .app，请检查 -derivedDataPath 路径"
+            exit 1
+          fi
+          echo "找到应用: $APP_PATH"
           mkdir -p "$CM_BUILD_DIR/output"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$CM_BUILD_DIR/output/靶场工坊.zip"
 
