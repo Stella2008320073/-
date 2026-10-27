@@ -1,45 +1,97 @@
 workflows:
   build-macos-zip:
-    name: 靶场工坊 macOS 构建
+    name: 靶场工坊自动构建
     max_build_duration: 30
     instance_type: mac_mini_m2
 
     environment:
       vars:
-        # 改成你实际的 .xcodeproj 文件名
-        XCODE_PROJECT: "TargetWorkshop.xcodeproj"
-        # 改成你实际的 Scheme 名（必须已在 Xcode 中勾选 Shared）
-        XCODE_SCHEME: "TargetWorkshop"
+        # 如果你确定工程和 Scheme 名字，填在这里；如果不确定，保持默认，脚本会自动找
+        EXPECTED_PROJECT: "TargetWorkshop.xcodeproj"
+        EXPECTED_SCHEME: "TargetWorkshop"
 
     scripts:
-      - name: 编译 macOS 应用（未签名）
+      - name: 智能编译 macOS 应用（未签名）
         script: |
           set -e
-          echo "项目文件: $XCODE_PROJECT"
-          echo "Scheme: $XCODE_SCHEME"
-          ls -la "$CM_BUILD_DIR/$XCODE_PROJECT"
+          
+          echo "========================================="
+          echo "1. 开始定位 Xcode 工程文件"
+          echo "========================================="
+          
+          # 如果根目录有指定的工程，直接用；如果没有，全局搜索
+          if [ -d "$CM_BUILD_DIR/$EXPECTED_PROJECT" ]; then
+            PROJECT_PATH="$CM_BUILD_DIR/$EXPECTED_PROJECT"
+          else
+            PROJECT_PATH=$(find "$CM_BUILD_DIR" -maxdepth 3 -name "*.xcodeproj" | head -1)
+          fi
+
+          if [ -z "$PROJECT_PATH" ]; then
+            echo "❌ 致命错误：在仓库中找不到任何 .xcodeproj 工程文件夹！"
+            echo "请检查 GitHub 仓库，确认上传了完整的 Xcode 工程（它应该是一个蓝色的文件夹图标）。"
+            exit 1
+          fi
+          echo "✅ 找到工程路径: $PROJECT_PATH"
+
+          echo "========================================="
+          echo "2. 开始智能识别 Scheme (构建方案)"
+          echo "========================================="
+          
+          # 获取工程内包含的所有 Scheme
+          SCHEMES=$(xcodebuild -list -project "$PROJECT_PATH" | grep -A 50 "Schemes:" | grep -v "Schemes:" | xargs)
+          
+          if echo "$SCHEMES" | grep -q "$EXPECTED_SCHEME"; then
+            SCHEME="$EXPECTED_SCHEME"
+          else
+            SCHEME=$(echo "$SCHEMES" | head -1)
+          fi
+
+          if [ -z "$SCHEME" ]; then
+            echo "❌ 致命错误：无法在工程中读取到任何 Scheme！"
+            echo "请回到 Xcode，点击顶部菜单 Product -> Scheme -> Manage Schemes，勾选你的应用旁边的 'Shared' (共享) 复选框，然后提交代码。"
+            exit 1
+          fi
+          echo "✅ 确定使用 Scheme: $SCHEME"
+
+          echo "========================================="
+          echo "3. 开始编译 (Release, 无签名)"
+          echo "========================================="
+          
+          # 清理可能存在的旧构建产物
+          rm -rf "$CM_BUILD_DIR/build_output"
 
           xcodebuild build \
-            -project "$CM_BUILD_DIR/$XCODE_PROJECT" \
-            -scheme "$XCODE_SCHEME" \
+            -project "$PROJECT_PATH" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -destination 'platform=macOS' \
-            -derivedDataPath "$CM_BUILD_DIR/build" \
+            -derivedDataPath "$CM_BUILD_DIR/build_output" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: 打包为 zip
+          echo "✅ 编译成功！"
+
+      - name: 打包为 ZIP
         script: |
           set -e
-          APP_PATH=$(find "$CM_BUILD_DIR/build/Build/Products/Release" -name "*.app" -maxdepth 1 | head -1)
+          echo "========================================="
+          echo "4. 打包应用"
+          echo "========================================="
+          
+          APP_PATH=$(find "$CM_BUILD_DIR/build_output/Build/Products/Release" -maxdepth 1 -name "*.app" | head -1)
+
           if [ -z "$APP_PATH" ]; then
-            echo "编译成功但找不到 .app，请检查 -derivedDataPath 路径"
+            echo "❌ 编译完成，但找不到生成的 .app 文件！"
             exit 1
           fi
-          echo "找到应用: $APP_PATH"
+          
+          echo "✅ 找到应用: $APP_PATH"
           mkdir -p "$CM_BUILD_DIR/output"
+          
+          # 使用 ditto 打包，确保 macOS 文件夹结构和权限不丢失
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$CM_BUILD_DIR/output/靶场工坊.zip"
+          echo "🎉 打包完成，准备供下载。"
 
     artifacts:
       - $CM_BUILD_DIR/output/*.zip
